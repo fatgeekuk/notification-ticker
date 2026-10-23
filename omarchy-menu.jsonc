@@ -1,0 +1,9 @@
+{
+  "trigger.toggle.notification-ticker": {
+    "icon": "󰂛",
+    "label": "Notification Ticker",
+    "description": "Scroll notifications along the bottom of the screen instead of showing cards",
+    "action": "omarchy-shell notifications toggleTicker",
+    "checked": "[[ $(omarchy-shell -q notifications tickerState) == on ]]"
+  }
+}
