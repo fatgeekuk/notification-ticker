@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- #SCHEME_COLOR and #SCHEME_BACKGROUND are replaced from the notification scheme. -->
+  <circle cx="12" cy="12" r="9" fill="#SCHEME_BACKGROUND" stroke="#SCHEME_COLOR" stroke-width="1.7"/>
+  <circle cx="12" cy="8" r="1.15" fill="#SCHEME_COLOR"/>
+  <path d="M12 11.2v5.3" fill="none" stroke="#SCHEME_COLOR" stroke-width="1.8" stroke-linecap="round"/>
+</svg>

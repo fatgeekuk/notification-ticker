@@ -105,8 +105,19 @@ Item {
   ListModel {
     id: popupModel
     onCountChanged: {
+      var previous = service.tickerLastCount
+      service.tickerLastCount = popupModel.count
       service.tickerRevision++
-      if (popupModel.count === 0) service.tickerHoverCount = 0
+      if (popupModel.count === 0) {
+        service.tickerHoverCount = 0
+        service.tickerClocks = ({})
+        service.tickerThumbLeaving = false
+        service.tickerExitAction = ""
+        service.tickerHoldKey = ""
+      } else if (popupModel.count > previous && service.tickerThumbLeaving && service.tickerExitAction === "expire") {
+        // A new notification arrived while the last one was bowing out.
+        service.cancelTickerExit()
+      }
     }
   }
 
@@ -137,6 +148,18 @@ Item {
     }
     return false
   }
+  // Newest attached picture. Index 0 is the newest row. App icons are a
+  // different field and stay out of the thumbnail.
+  readonly property string tickerImage: {
+    var rev = tickerRevision
+    for (var i = 0; i < popupModel.count; i++) {
+      var row = popupModel.get(i)
+      if (!row) continue
+      var image = String(row.image || "")
+      if (image.length > 0) return image
+    }
+    return ""
+  }
 
   onTickerPlainChanged: tickerOffset = 0
 
@@ -163,10 +186,133 @@ Item {
   function noteTickerHover(hovered) {
     tickerHoverCount += hovered ? 1 : -1
     if (tickerHoverCount < 0) tickerHoverCount = 0
+    // Hover pauses expiry, so an automatic bow-out waits until the pointer leaves.
+    if (tickerHovered && tickerThumbLeaving && tickerExitAction === "expire")
+      cancelTickerExit()
+  }
+
+  // The thumbnail slides away before the ticker actually clears. Clocks are
+  // remaining milliseconds per popup, or -1 when the row does not expire.
+  property int tickerLastCount: 0
+  property var tickerClocks: ({})
+  property bool tickerThumbLeaving: false
+  property int tickerThumbCancel: 0
+  property string tickerExitAction: ""
+  property string tickerHoldKey: ""
+  readonly property int tickerExitLead: 500
+
+  function tickerClockKey(timestamp, originalId) {
+    return String(timestamp) + ":" + String(originalId)
+  }
+
+  function noteTickerClock(key, remainMs) {
+    if (!key) return
+    var copy = {}
+    var clocks = tickerClocks || {}
+    for (var k in clocks) {
+      if (k !== key) copy[k] = clocks[k]
+    }
+    copy[key] = remainMs
+    tickerClocks = copy
+    if (tickerThumbLeaving && tickerExitAction === "expire") {
+      if (tickerCritical || (key === tickerHoldKey && remainMs > tickerExitLead))
+        cancelTickerExit()
+    }
+    considerTickerExit()
+  }
+
+  function forgetTickerClock(key) {
+    if (!key || !tickerClocks || tickerClocks[key] === undefined) return
+    var copy = {}
+    for (var k in tickerClocks) {
+      if (k !== key) copy[k] = tickerClocks[k]
+    }
+    tickerClocks = copy
+    considerTickerExit()
+  }
+
+  function considerTickerExit() {
+    if (!ticker || tickerHovered || tickerThumbLeaving || popupModel.count === 0 || tickerCritical) return
+    var clocks = tickerClocks || {}
+    var maxMs = -1
+    var maxKey = ""
+    for (var k in clocks) {
+      var ms = Number(clocks[k])
+      if (!isFinite(ms) || ms < 0) return
+      if (ms >= maxMs) {
+        maxMs = ms
+        maxKey = k
+      }
+    }
+    if (maxKey.length === 0) return
+    if (maxMs <= tickerExitLead) requestTickerExit("expire", maxKey)
+  }
+
+  function requestTickerExit(action, key) {
+    if (!ticker) {
+      if (action === "clear") clearPopupsNow()
+      else dismissPopupByKey(key, action === "expire" ? "expire" : "dismiss")
+      return
+    }
+    if (tickerThumbLeaving) {
+      if (action === "clear" || action === "dismiss-last") tickerExitAction = action
+      if (key) tickerHoldKey = key
+      return
+    }
+    tickerExitAction = action
+    tickerHoldKey = key || ""
+    tickerThumbLeaving = true
+    tickerExitWatch.restart()
+  }
+
+  function cancelTickerExit() {
+    if (!tickerThumbLeaving || tickerExitAction !== "expire") return
+    tickerExitWatch.stop()
+    tickerThumbLeaving = false
+    tickerExitAction = ""
+    tickerHoldKey = ""
+    tickerThumbCancel++
+  }
+
+  function finishTickerThumbExit() {
+    if (!tickerThumbLeaving) return
+    tickerExitWatch.stop()
+    var action = tickerExitAction
+    var key = tickerHoldKey
+    tickerExitAction = ""
+    tickerHoldKey = ""
+    tickerThumbLeaving = false
+    if (action === "clear") clearPopupsNow()
+    else if (action === "dismiss-last") dismissPopupByKey(key, "dismiss")
+    else if (action === "expire") dismissPopupByKey(key, "expire")
+  }
+
+  function dismissPopupByKey(key, reason) {
+    if (!key) return
+    for (var i = popupModel.count - 1; i >= 0; i--) {
+      var row = popupModel.get(i)
+      if (!row) continue
+      if (tickerClockKey(row.timestamp, row.originalId) === key) {
+        removePopup(i, reason)
+        return
+      }
+    }
+  }
+
+  Timer {
+    id: tickerExitWatch
+    interval: 800
+    repeat: false
+    onTriggered: service.finishTickerThumbExit()
   }
 
   function dismissOldestPopup() {
-    if (popupModel.count <= 0) return
+    if (popupModel.count <= 0 || tickerThumbLeaving) return
+    if (ticker && popupModel.count === 1) {
+      var row = popupModel.get(0)
+      requestTickerExit("dismiss-last", row ? tickerClockKey(row.timestamp, row.originalId) : "")
+      return
+    }
     dismissPopup(popupModel.count - 1)
   }
 
@@ -471,6 +617,15 @@ Item {
   }
 
   function clearPopups() {
+    if (popupModel.count <= 0) return
+    if (ticker) {
+      requestTickerExit("clear", "")
+      return
+    }
+    clearPopupsNow()
+  }
+
+  function clearPopupsNow() {
     while (popupModel.count > 0) dismissPopup(0)
   }
 
@@ -1220,9 +1375,21 @@ Item {
       required property string image
       required property int urgency
       required property double expireTimeout
+      required property double timestamp
+      required property int originalId
 
       readonly property real lifetime: service.durationFor(tickerLife.urgency, tickerLife.expireTimeout)
+      readonly property string clockKey: service.tickerClockKey(timestamp, originalId)
       property real remainingLifetime: 1.0
+
+      function reportClock() {
+        var remain = tickerLife.lifetime > 0 ? Math.max(0, tickerLife.remainingLifetime * tickerLife.lifetime) : -1
+        service.noteTickerClock(tickerLife.clockKey, remain)
+      }
+
+      Component.onCompleted: reportClock()
+      Component.onDestruction: service.forgetTickerClock(clockKey)
+      onRemainingLifetimeChanged: reportClock()
 
       onSummaryChanged: tickerLife.remainingLifetime = 1.0
       onBodyChanged: tickerLife.remainingLifetime = 1.0
@@ -1234,6 +1401,8 @@ Item {
         running: service.ticker && tickerLife.lifetime > 0 && !service.tickerHovered
         onTriggered: {
           if (tickerLife.lifetime <= 0) return
+          // The bow-out holds this row so the slide can finish before it leaves.
+          if (service.tickerHoldKey === tickerLife.clockKey) return
           tickerLife.remainingLifetime -= 50.0 / tickerLife.lifetime
           if (tickerLife.remainingLifetime <= 0) {
             tickerLife.remainingLifetime = 0

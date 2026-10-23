@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "bentcharge.notification-ticker",
+  "id": "fatgeekuk.notification-ticker",
   "name": "Notification ticker",
   "version": "1.0.0",
-  "author": "Bent Charge Labs",
+  "author": "@fatgeekuk",
   "license": "MIT",
   "description": "Shows notifications as a bottom news ticker. Replaces the built-in notification daemon while it is enabled.",
   "kinds": [
